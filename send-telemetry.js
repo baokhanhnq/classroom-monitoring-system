@@ -18,12 +18,45 @@ try {
   }
 }
 
-const BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://broker.emqx.io:1883';
+let dotenv;
+try {
+  dotenv = require('./backend/node_modules/dotenv');
+} catch {
+  try {
+    dotenv = require('dotenv');
+  } catch {
+    dotenv = null;
+  }
+}
+if (dotenv) {
+  dotenv.config({ path: require('path').resolve(__dirname, '.env'), quiet: true });
+} else {
+  const fs = require('fs');
+  const envPath = require('path').resolve(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (match && !process.env[match[1]]) {
+        process.env[match[1]] = match[2]?.trim().replace(/^['"]|['"]$/g, '') || '';
+      }
+    }
+  }
+}
+
+const BROKER_URL = process.env.MQTT_URL || process.env.MQTT_BROKER_URL || 'mqtt://127.0.0.1:1883';
 const ROOM_ID = 'P.101';
 const NODES = ['NODE-NW', 'NODE-NE', 'NODE-SW', 'NODE-SE'];
 
 let nodeIndex = 0;
-const client = mqtt.connect(BROKER_URL);
+const clientOptions = {
+  clientId: `send_telemetry_${Math.random().toString(16).substring(2, 8)}`,
+  clean: true,
+};
+if (process.env.MQTT_USERNAME) clientOptions.username = process.env.MQTT_USERNAME;
+if (process.env.MQTT_PASSWORD) clientOptions.password = process.env.MQTT_PASSWORD;
+
+const client = mqtt.connect(BROKER_URL, clientOptions);
 
 console.log('\n======================================================================');
 console.log('📡 SMART CLASSROOM - BỘ MÔ PHỎNG DỮ LIỆU CẢM BIẾN TỰ ĐỘNG (5 GIÂY/LẦN)');
@@ -36,7 +69,8 @@ function getRandomTelemetry(nodeId) {
   const hum = +(50.0 + Math.random() * 25.0).toFixed(1);    // 50.0% - 75.0%
   const press = +(1008.0 + Math.random() * 6.0).toFixed(1); // 1008.0 - 1014.0 hPa
   const lux = Math.floor(320 + Math.random() * 350);        // 320 - 670 Lux
-  const co2 = Math.floor(380 + Math.random() * 150);        // 380 - 530 ppm
+  // Chỉ số tương đối MQ135 theo contract backend: <= 100 là bình thường.
+  const airQuality = Math.floor(50 + Math.random() * 45);    // 50 - 94
   const rssi = Math.floor(-65 + Math.random() * 20);        // -65 đến -45 dBm
 
   return {
@@ -46,7 +80,7 @@ function getRandomTelemetry(nodeId) {
     humidity: hum,
     pressure_hpa: press,
     light_lux: lux,
-    air_quality_ppm: co2,
+    air_quality_ppm: airQuality,
     status: 'VALID',
     ble_rssi: rssi,
     timestamp: now
@@ -74,7 +108,7 @@ function sendNextTelemetry() {
         'Độ ẩm': `${payload.humidity} %`,
         'Áp suất': `${payload.pressure_hpa} hPa`,
         'Ánh sáng': `${payload.light_lux} Lux`,
-        'Khí CO2 (MQ135)': `${payload.air_quality_ppm} ppm`,
+        'Chất lượng không khí (MQ135)': `${payload.air_quality_ppm} ppm`,
         'Trạng thái': 'Hợp lệ'
       }]);
     }

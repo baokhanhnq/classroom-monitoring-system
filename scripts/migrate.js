@@ -33,17 +33,28 @@ function splitSqlStatements(script) {
 
 async function executeScript(connection, script) {
     for (const statement of splitSqlStatements(script)) {
-        await connection.query(statement);
+        try {
+            await connection.query(statement);
+        } catch (err) {
+            // Ignore duplicate column or key errors if column already exists
+            if (['ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_CANT_DROP_FIELD_OR_KEY'].includes(err.code) || err.errno === 1060 || err.errno === 1061) {
+                console.log(`  [info] Ignored duplicate column/index: ${err.message}`);
+            } else {
+                throw err;
+            }
+        }
     }
 }
 
 async function runMigrations({ seed = process.argv.includes('--seed') } = {}) {
     const databaseName = process.env.DB_NAME || 'classroom_monitoring';
+    const sslOption = process.env.DB_SSL === 'false' ? undefined : (process.env.DB_HOST?.includes('aivencloud.com') || process.env.DB_SSL === 'true') ? { rejectUnauthorized: false } : undefined;
     const connection = await mysql.createConnection({
         host: process.env.DB_HOST || 'localhost',
         port: Number(process.env.DB_PORT || 3306),
         user: process.env.DB_USER || 'root',
         password: process.env.DB_PASSWORD || '',
+        ssl: sslOption,
     });
 
     try {
